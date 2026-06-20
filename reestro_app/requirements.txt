@@ -1,0 +1,10 @@
+# GUI
+PySide6>=6.6
+
+# Движок парсера (те же зависимости, что и reestro/requirements.txt)
+requests>=2.31
+openpyxl>=3.1
+fpdf2>=2.7
+
+# Сборка .exe (только для разработчика, не для конечного пользователя)
+pyinstaller>=6.3

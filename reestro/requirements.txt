@@ -1,0 +1,6 @@
+requests>=2.31
+openpyxl>=3.1
+fpdf2>=2.7
+# Только для fetch_rosreestr.py (браузерная загрузка «Формы собственности»).
+# После установки выполните: python -m playwright install chromium
+playwright>=1.40

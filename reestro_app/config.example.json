@@ -1,0 +1,10 @@
+{
+  "baseUrl": "https://api.kontur.ru",
+  "apiKey": "ВАШ-API-КЛЮЧ",
+  "orgId": "ВАШ-ORG-ID",
+  "proxy": "",
+  "timeout": 120,
+  "retries": 5,
+  "pause": 2.0,
+  "save_every": 5
+}

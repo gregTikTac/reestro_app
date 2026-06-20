@@ -1,0 +1,60 @@
+# Секреты и локальная конфигурация
+**/config.json
+!**/config.json.example
+**/TZ/ключ API.txt
+.env
+
+# Настройки GUI (локальные пути)
+reestro_app/settings.json
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Результаты парсера
+**/output/
+**/output_test_first/
+**/output_*/
+
+# Сборка GUI (PyInstaller / Inno Setup)
+reestro_app/dist/
+reestro_app/dist_installer/
+reestro_app/build/dist_installer/
+reestro_app/build/_work/
+reestro_app/build/egrn/
+reestro_app/release/ЕГРН-Парсер_0.1.0/
+reestro_app/release/*.zip
+reestro_app/innosetup-*.exe
+*.exe
+!**/*.bat
+
+# Старые архивы и дубликаты
+files_final/
+
+# Движок: dist-копии
+reestro/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Playwright
+**/.pw_profile/
+
+# IDE
+.idea/
+.vscode/
+.obsidian/
+*.cursor-chat.json
+cursor-chat-export*.json
+
+# Временные файлы
+*.log
+*.tmp
+~$*.xlsx
+
+# Входной файл заказчика (передаётся отдельно)
+**/TZ/Запрос.xlsx

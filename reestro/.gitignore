@@ -1,0 +1,38 @@
+# Секреты и локальная конфигурация
+config.json
+TZ/ключ API.txt
+.env
+
+# Виртуальное окружение Python
+venv/
+.venv/
+env/
+
+# Результаты работы парсера (создаются при запуске)
+output/
+output_test_first/
+output_*/
+
+# Профиль браузера Playwright
+**/.pw_profile/
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# IDE и служебные файлы
+.idea/
+.vscode/
+.obsidian/
+*.cursor-chat.json
+cursor-chat-export*.json
+
+# Временные и тестовые артефакты
+*.log
+*.tmp
+~$*.xlsx
+
+# Входной файл заказчика (часто большой, передаётся отдельно)
+TZ/Запрос.xlsx
