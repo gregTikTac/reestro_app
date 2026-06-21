@@ -41,8 +41,12 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Playwright
+# Playwright (профили браузера с сессией входа Госуслуг — не коммитим!)
 **/.pw_profile/
+**/.pw_profile_rosreestr/
+**/browser_profile_rosreestr/
+# Скачанный браузер Chromium для Playwright (тяжёлый, ставится автоматически)
+**/ms-playwright/
 
 # IDE
 .idea/

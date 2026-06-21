@@ -30,6 +30,7 @@ DEFAULT_SETTINGS = {
     "last_output": "",
     "auto_name": True,
     "report_name": "",
+    "gosuslugi_login": "",
     "range_from": "",
     "range_to": "",
     "limit": "",

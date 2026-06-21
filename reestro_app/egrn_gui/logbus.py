@@ -25,11 +25,11 @@ STATUS_LEVEL = {
 class RunLogger:
     """Пишет события прогона в JSONL-файл (по событию на строку)."""
 
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, *, prefix: str = "run"):
         self.dir = Path(output_dir) / "logs"
         self.dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.path = self.dir / f"run_{stamp}.jsonl"
+        self.path = self.dir / f"{prefix}_{stamp}.jsonl"
         self._fh = open(self.path, "a", encoding="utf-8")
 
     def write_event(self, event: dict):
@@ -48,6 +48,17 @@ class RunLogger:
         self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self._fh.flush()
 
+    def write_line(self, message: str, *, level: str = "INFO", kn: str = "",
+                   status: str = "log") -> None:
+        """Произвольная строка журнала (для сбора Росreestr и др.)."""
+        self.write_event({
+            "type": "log",
+            "level": level,
+            "status": status,
+            "kn": kn,
+            "message": message,
+        })
+
     def close(self):
         try:
             self._fh.close()
@@ -59,7 +70,9 @@ def list_log_files(output_dir: Path) -> list[Path]:
     d = Path(output_dir) / "logs"
     if not d.exists():
         return []
-    return sorted(d.glob("run_*.jsonl"), reverse=True)
+    files = [p for p in d.glob("*.jsonl")
+             if p.name.startswith(("run_", "rosreestr_"))]
+    return sorted(files, key=lambda p: p.name, reverse=True)
 
 
 def read_log(path: Path) -> list[dict]:

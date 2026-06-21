@@ -468,7 +468,8 @@ class EgrnPdf(FPDF):
 
     def __init__(self, obj_type: str, cadastral: str, report_date: str,
                  info: dict, rights: list[dict], input_row: "InputRow",
-                 totals: tuple | None = None, ownership_form: str = ""):
+                 totals: tuple | None = None, ownership_form: str = "",
+                 encumbrances_override: list[str] | None = None):
         super().__init__(orientation="L", unit="mm", format="letter")
         self.set_margins(9, 20, 9)              # боковые ~26 pt; верх 20 мм
         self.b_margin = 30                        # низ ~86 pt как в образце
@@ -483,6 +484,7 @@ class EgrnPdf(FPDF):
         self._rights   = rights
         self._row      = input_row
         self._owner_form = _str(ownership_form)
+        self._enc_override = [_str(e) for e in (encumbrances_override or []) if _str(e)]
 
         self._uw = self.w - self.l_margin - self.r_margin   # рабочая ширина
         self._indent = 20                                 # отступ 2 см для абзацев
@@ -822,6 +824,20 @@ class EgrnPdf(FPDF):
                     tr.cell("Сведения о зарегистрированных правах отсутствуют",
                             colspan=4)
             return
+        # Обременение/ограничение относится к ОБЪЕКТУ, а не к отдельному праву:
+        # объединяем все источники (права из API + форма с Росреестра) и показываем
+        # ОДИНАКОВО у каждого правообладателя — как требует заказчик.
+        obj_encs: list[str] = []
+        for rr in rights:
+            for e in (rr.get("encumbrances") or []):
+                e = _str(e)
+                if e and e not in obj_encs:
+                    obj_encs.append(e)
+        for e in self._enc_override:
+            if e and e not in obj_encs:
+                obj_encs.append(e)
+        enc_txt = "; ".join(obj_encs) if obj_encs else "не зарегистрировано"
+
         self._f(10)
         with self.table(col_widths=(self._c1, self._c2, self._c3, self._c4),
                         width=self._uw,
@@ -862,8 +878,8 @@ class EgrnPdf(FPDF):
                     "третьего лица, органа:",
                     "3.1", "данные отсутствуют")
 
-                encs = r.get("encumbrances") or []
-                enc_txt = "; ".join(encs) if encs else "не зарегистрировано"
+                # обременения едины по объекту (см. obj_encs выше) — одинаково
+                # для каждого правообладателя.
                 self._emit_section2_rows(
                     table, "4",
                     "Ограничение прав и обременение объекта недвижимости:",
@@ -924,7 +940,8 @@ class EgrnPdf(FPDF):
 
 def generate_pdf(info: dict, rights: list[dict],
                  input_row: InputRow, out_path: Path,
-                 ownership_form: str = ""):
+                 ownership_form: str = "",
+                 encumbrances_override: list[str] | None = None):
     """Генерирует PDF-отчёт в формате образца (альбомный, Times New Roman)."""
     obj_type  = info.get("realEstateGroup") or "Объект недвижимости"
     cadastral = info.get("cadastralNumber") or input_row.cadastral or ""
@@ -932,7 +949,8 @@ def generate_pdf(info: dict, rights: list[dict],
 
     # 1-й проход — узнаём число листов в каждом разделе
     probe = EgrnPdf(obj_type, cadastral, rep_date, info, rights, input_row,
-                    ownership_form=ownership_form)
+                    ownership_form=ownership_form,
+                    encumbrances_override=encumbrances_override)
     probe.build()
     s1_pages  = probe._s2_first - 1
     total_all = probe.page_no()
@@ -941,7 +959,8 @@ def generate_pdf(info: dict, rights: list[dict],
     # 2-й проход — с корректными счётчиками «Всего листов …»
     doc = EgrnPdf(obj_type, cadastral, rep_date, info, rights, input_row,
                   totals=(s1_pages, s2_pages, total_all),
-                  ownership_form=ownership_form)
+                  ownership_form=ownership_form,
+                  encumbrances_override=encumbrances_override)
     doc.build()
     doc.output(str(out_path))
 
@@ -1000,32 +1019,35 @@ def build_xlsx_rows(input_row: InputRow, info: dict | None,
     Строит строки для report.xlsx (одна строка = одно право объекта).
     A–C из Запрос.xlsx; D–AB пустые; права — из ответа API (открытые сведения ЕГРН).
 
-    Колонки группы «Собственник» (0-индексы 28–31):
-      28 «ФИО»               — открытые сведения ЕГРН не содержат ФИО → «данные отсутствуют»;
-      29 «Вид собственности» — форма собственности с lk.rosreestr.ru (стр. «Форма собственности»);
+    Колонки группы «Собственник» (0-индексы 28–31) — как в образце заказчика:
+      28 «ФИО»               — форма собственности с lk.rosreestr.ru
+                               (Частная/Муниципальная/Общая долевая…); едина для объекта;
+      29 «Вид собственности» — тип зарегистрированного права из API
+                               (Собственность/Оперативное управление/Общая долевая…);
       30 «Доля»              — доля в праве; пустая, если данных нет (правка заказчика);
       31 «Право»             — вид, номер и дата государственной регистрации права.
     """
     base = _xlrow_base(input_row)
     base[1] = input_row.cadastral
 
-    # Форма собственности едина для объекта (берётся из Росреестра, не из API Контура).
+    # Форма собственности едина для объекта (берётся из Росреестра, не из API Контура):
+    # если она есть хотя бы по объекту — попадает в «ФИО» во ВСЕХ строках этого КН.
     form = _str(ownership_form)
     pdf_filename = pdf_name_for_extract(extract_id) or pdf_filename
 
-    def rights_block(fio, own_form, share, right) -> list:
+    def rights_block(form_val, right_type_val, share, right) -> list:
+        # 28 ФИО = форма собственности; 29 Вид собственности = тип права.
         # «Доля» НЕ оборачиваем в _dn: пустая ячейка остаётся пустой.
-        return [_dn(fio), _dn(own_form), _str(share), _dn(right)]
+        return [_dn(form_val), _dn(right_type_val), _str(share), _dn(right)]
 
     result = []
     if not rights:
-        row = base + rights_block("", form, "", "") + [
+        row = base + rights_block(form, "", "", "") + [
             extract_id, extract_date, pdf_filename,
         ]
         result.append(row)
     else:
         for r in rights:
-            fio         = r.get("owner_type") or ""
             right_type  = r.get("right_type") or ""
             share       = r.get("share") or ""
             number      = r.get("number") or ""
@@ -1038,7 +1060,7 @@ def build_xlsx_rows(input_row: InputRow, info: dict | None,
                 right_col = full
 
             row = base[:] + rights_block(
-                fio, form, share, right_col,
+                form, right_type, share, right_col,
             ) + [
                 extract_id,
                 extract_date,
@@ -1182,6 +1204,54 @@ ROSREESTR_ONLINE_URL = "https://lk.rosreestr.ru/eservices/real-estate-objects-on
 OWNERSHIP_FORM_RE = re.compile(
     r"Форма\s+собственности\s*[:\-]?\s*(.+)", re.IGNORECASE
 )
+# Обременения/ограничения на карточке объекта Росреестра.
+ENCUMBRANCE_LABEL_RE = re.compile(
+    r"(Ограничени[ея].*?обременени|Обременени|Вид\s+ограничени)",
+    re.IGNORECASE,
+)
+# Типовые виды обременений (для распознавания строки-значения).
+ENCUMBRANCE_KINDS = (
+    "ипотека", "аренда", "арест", "запрещение", "сервитут", "доверительное",
+    "рента", "концесси", "залог", "безвозмездн",
+)
+
+
+def extract_encumbrances_from_text(text: str) -> list[str]:
+    """
+    Best-effort извлечение обременений из текста карточки объекта Росреестра.
+
+    Возвращает список строк-обременений (напр. «Ипотека в силу закона, № … от …»).
+    Если явных обременений нет — пустой список (в отчёте будет «не зарегистрировано»).
+    """
+    if not text:
+        return []
+    found: list[str] = []
+    lines = [l.strip() for l in re.split(r"[\r\n]+", text) if l.strip()]
+    for i, line in enumerate(lines):
+        low = line.lower()
+        # 1) строка-значение прямо содержит вид обременения
+        if any(k in low for k in ENCUMBRANCE_KINDS):
+            if "не зарегистрировано" in low or "отсутств" in low:
+                continue
+            val = line
+            if val not in found:
+                found.append(val)
+            continue
+        # 2) после метки «Ограничение/Обременение» значение на след. строке
+        if ENCUMBRANCE_LABEL_RE.search(line):
+            m = re.search(ENCUMBRANCE_LABEL_RE.pattern + r".*?[:\-]\s*(.+)",
+                          line, re.IGNORECASE)
+            tail = (m.group(2).strip() if m and m.lastindex and m.group(2) else "")
+            cand = tail
+            if not cand:
+                for nxt in lines[i + 1:i + 3]:
+                    if any(k in nxt.lower() for k in ENCUMBRANCE_KINDS):
+                        cand = nxt
+                        break
+            if cand and "не зарегистрировано" not in cand.lower():
+                if cand not in found:
+                    found.append(cand)
+    return found
 
 
 def ownership_cache_path(cache_dir: Path, kn: str) -> Path:
@@ -1220,18 +1290,56 @@ def load_ownership_cache(cache_dir: Path, kn: str) -> str | None:
     return _str(data.get("ownership_form"))
 
 
-def save_ownership_cache(cache_dir: Path, kn: str, form: str, source: str) -> Path:
+def save_ownership_cache(cache_dir: Path, kn: str, form: str, source: str,
+                         encumbrances: list[str] | None = None) -> Path:
+    """
+    Сохраняет данные о собственности с lk.rosreestr.ru в кэш.
+
+    Формат (обратно совместим — старые файлы содержат только ownership_form):
+      ownership_form — форма собственности («Частная собственность» и т.п.);
+      encumbrances   — список обременений объекта (необязательно).
+    При повторном сохранении непустые прежние значения не затираются пустыми.
+    """
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = ownership_cache_path(cache_dir, kn)
+
+    prev: dict = {}
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                prev = json.load(f) or {}
+        except (OSError, ValueError):
+            prev = {}
+
+    form = _str(form) or _str(prev.get("ownership_form"))
+    if encumbrances is None:
+        encumbrances = prev.get("encumbrances") or []
+    encumbrances = [_str(e) for e in encumbrances if _str(e)]
+
     payload = {
         "cadastralNumber": normalize_kn(kn),
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
         "source": source,
-        "ownership_form": _str(form),
+        "ownership_form": form,
+        "encumbrances": encumbrances,
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return path
+
+
+def load_object_encumbrances(cache_dir: Path, kn: str) -> list[str]:
+    """Список обременений объекта из кэша Росреестра (пусто, если нет)."""
+    path = ownership_cache_path(cache_dir, kn)
+    if not path.exists():
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    encs = data.get("encumbrances") or []
+    return [_str(e) for e in encs if _str(e)]
 
 
 def fetch_ownership_form_rosreestr(kn: str, timeout: int = 30) -> str:

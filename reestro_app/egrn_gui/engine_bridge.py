@@ -354,8 +354,11 @@ class BatchRunner:
                 if info and info.get("cadastralNumber"):
                     rights = eng.extract_rights(info)
                     own = ownership_for(kn_norm)
+                    encs = eng.load_object_encumbrances(rr_cache_dir, kn_norm)
                     try:
-                        eng.generate_pdf(info, rights, row, pdf_path, ownership_form=own)
+                        eng.generate_pdf(info, rights, row, pdf_path,
+                                         ownership_form=own,
+                                         encumbrances_override=encs)
                     except Exception as exc:  # noqa: BLE001
                         failed += 1
                         self._ev("object", index=n, total=total, kn=kn_norm,

@@ -81,6 +81,26 @@ class ConnectionTab(QWidget):
         nform.addRow("Автосохранение каждые (объектов):", self.save_every)
         root.addWidget(net_box)
 
+        # Росреестр: логин кадастрового инженера (для сбора формы собственности).
+        rr_box = QGroupBox("Госуслуги / Росреестр (для вкладки «Собственники»)")
+        rform = QFormLayout(rr_box)
+        self.gosuslugi_login = QLineEdit(
+            self.win.settings.get("gosuslugi_login", ""))
+        self.gosuslugi_login.setPlaceholderText(
+            "логин/телефон/email кадастрового инженера (для удобства)")
+        self.gosuslugi_login.setToolTip(
+            "Только для подсказки. Пароль и код подтверждения вводятся в браузере "
+            "вручную и НИГДЕ не сохраняются (Госуслуги требуют 2FA).")
+        rform.addRow("Логин Госуслуг:", self.gosuslugi_login)
+        warn = QLabel(
+            "Пароль не хранится в программе: вход через Госуслуги выполняется в "
+            "браузере с подтверждением по коду. Достаточно войти один раз — сессия "
+            "сохранится. Сбор данных — на вкладке «Собственники (Росреестр)».")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #827717; font-size: 11px;")
+        rform.addRow("", warn)
+        root.addWidget(rr_box)
+
         btns = QHBoxLayout()
         self.save_btn = QPushButton("Сохранить")
         self.save_btn.clicked.connect(self.on_save)
@@ -106,6 +126,8 @@ class ConnectionTab(QWidget):
         cfg["retries"] = self.retries.value()
         cfg["pause"] = self.pause.value()
         cfg["save_every"] = self.save_every.value()
+        # логин Госуслуг храним в settings (не в config с API-ключами); без пароля
+        self.win.settings["gosuslugi_login"] = self.gosuslugi_login.text().strip()
         return cfg
 
     def on_save(self):

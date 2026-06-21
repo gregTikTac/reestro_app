@@ -32,6 +32,7 @@ from reestro_parser import (
     get_ownership_form,
     load_existing_report,
     load_input_index,
+    load_object_encumbrances,
     load_ownership_overrides,
     new_extract_id,
     normalize_kn,
@@ -148,9 +149,11 @@ def main():
 
         rights = extract_rights(info)
         own_form = get_ownership_form(kn, rr_cache_dir, overrides, fetch=False)
+        encs = load_object_encumbrances(rr_cache_dir, kn)
 
         if not args.no_pdf:
-            generate_pdf(info, rights, row, pdf_dir / pdf_name, ownership_form=own_form)
+            generate_pdf(info, rights, row, pdf_dir / pdf_name,
+                         ownership_form=own_form, encumbrances_override=encs)
 
         new_rows.extend(build_xlsx_rows(
             row, info, rights, pdf_name, extract_id, extract_date,

@@ -26,6 +26,7 @@ def _asset(name: str) -> Path:
 from .tabs.tab_connection import ConnectionTab
 from .tabs.tab_batch import BatchTab
 from .tabs.tab_single import SingleTab
+from .tabs.tab_owners import OwnersTab
 from .tabs.tab_maintenance import MaintenanceTab
 from .tabs.tab_logs import LogsTab
 from .tabs.tab_results import ResultsTab
@@ -52,12 +53,14 @@ class MainWindow(QMainWindow):
         self.batch_tab = BatchTab(self)
         self.single_tab = SingleTab(self)
         self.maintenance_tab = MaintenanceTab(self)
+        self.owners_tab = OwnersTab(self)
         self.logs_tab = LogsTab(self)
         self.results_tab = ResultsTab(self)
 
         self.tabs.addTab(self.connection_tab, "Подключение")
         self.tabs.addTab(self.batch_tab, "Пакетная обработка")
         self.tabs.addTab(self.single_tab, "Одиночный объект")
+        self.tabs.addTab(self.owners_tab, "Собственники (Росреестр)")
         self.tabs.addTab(self.maintenance_tab, "Обслуживание")
         self.tabs.addTab(self.logs_tab, "Анализ логов")
         self.tabs.addTab(self.results_tab, "Результаты")
