@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from .engine_bridge import _engine_dir
-from .playwright_setup import configure_env, ensure_chromium, browsers_dir
+from .playwright_setup import configure_env
 from .settings import app_dir
 
 
@@ -103,6 +103,7 @@ def _apply_cache_to_report(out_root: Path, on_log: Callable[[str], None]) -> Non
 
     report = out_root / "report.xlsx"
     pdf_dir = out_root / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
     existing: list[list] = []
     if report.exists():
         _, existing = rp.load_existing_report(report, pdf_dir)
@@ -144,8 +145,7 @@ def run_collection(
     """
     res = CollectResult()
     configure_env()
-    if not ensure_chromium(on_log):
-        on_log("Встроенный Chromium не найден — попробую системный Edge или Chrome.")
+    on_log("Браузер для Росreestr: Microsoft Edge (системный).")
 
     rp, fr = _import_engine_modules()
     try:
@@ -168,7 +168,6 @@ def run_collection(
     prof = profile_dir()
     prof.mkdir(parents=True, exist_ok=True)
     on_log(f"Профиль браузера (вход сохраняется): {prof}")
-    on_log(f"Браузеры Playwright: {browsers_dir()}")
     on_log(f"К сбору: {len(kns)} объектов.")
 
     with sync_playwright() as pw:
@@ -207,12 +206,19 @@ def run_collection(
             page = fr.pick_rosreestr_page(ctx) or page
             try:
                 url = (page.url or "").lower()
+                if fr.is_guest_reference_form(page) or fr.is_auth_page(page) or (
+                        "rosreestr.ru" in url and not fr.is_lk_personal_form(page)):
+                    fr.try_click_login(page, on_log=on_log)
                 if "rosreestr.ru" in url and not fr.is_on_reference_page(page):
                     fr.navigate_to_reference_online(page, on_log=on_log)
                 if fr.is_on_reference_page(page):
-                    if not form_ready_notified:
-                        on_form_ready()
-                        form_ready_notified = True
+                    if fr.is_lk_personal_form(page):
+                        if not form_ready_notified:
+                            on_form_ready()
+                            form_ready_notified = True
+                    elif fr.is_guest_reference_form(page) and not form_ready_notified:
+                        on_log("  открыта гостевая форма (капча) — войдите через Госуслуги, "
+                               "нужна форма с полем «Вид объекта»")
             except Exception:
                 pass
             end = time.time() + 2
@@ -237,6 +243,22 @@ def run_collection(
         on_log("Подтверждён вход — проверяю справочную…")
         fr.navigate_to_reference_online(page, on_log=on_log)
         on_log("Проверяю форму поиска после входа…")
+        if fr.is_guest_reference_form(page):
+            ctx.close()
+            res.error = (
+                "Открыта гостевая форма с капчей — поля «Вид объекта» нет. "
+                "Войдите через Госуслуги как кадастровый инженер (как на вашем "
+                "скриншоте с пунктами Здание/Помещение), дождитесь поля "
+                "«Вид объекта» и нажмите «Вход выполнен — продолжить» снова.")
+            on_log(res.error)
+            return res
+        if not fr.is_lk_personal_form(page):
+            ctx.close()
+            res.error = (
+                "Форма ЛK не распознана: нет поля «Вид объекта». Откройте "
+                "«Справочную информацию online» после входа через Госуслуги.")
+            on_log(res.error)
+            return res
         if not fr.ensure_search_page(page, on_log=on_log, timeout_ms=60000):
             ctx.close()
             res.error = (
@@ -246,8 +268,25 @@ def run_collection(
             on_log(res.error)
             return res
         on_log("Форма поиска готова — начинаю обход объектов.")
+        recorder = None
+        try:
+            from browser_recorder import BrowserRecorder
+
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            events_log = out_root / "logs" / f"browser_events_{stamp}.jsonl"
+            events_log.parent.mkdir(parents=True, exist_ok=True)
+            recorder = BrowserRecorder(page, out_path=events_log)
+            recorder.install()
+            fr._ACTIVE_RECORDER = recorder
+            fr._ACTIVE_RECORDER_LOG = on_log
+            on_log(f"Журнал действий в браузере: {events_log}")
+        except Exception as exc:  # noqa: BLE001
+            on_log(f"  запись событий недоступна: {exc}")
+
         if assisted:
-            on_log("Режим: проверочный (с оператором). Автозаполнение отключено.")
+            on_log("Режим: проверочный (с оператором).")
+        else:
+            on_log("Режим: автоматический — вид объекта, поиск и карточка без участия оператора.")
 
         for i, kn in enumerate(kns, 1):
             if should_cancel():
@@ -263,7 +302,7 @@ def run_collection(
                     except Exception:
                         pass
                 obj_type = fr.load_object_type_hint(out_root, kn)
-                form, encs = fr.auto_fetch_one(
+                form, encs, prev_nums = fr.auto_fetch_one(
                     page, kn, auto=not assisted, wait_captcha=True,
                     object_type=obj_type,
                     should_cancel=should_cancel,
@@ -279,7 +318,10 @@ def run_collection(
                 consume_skip()
                 on_log("  объект пропущен — следующий")
                 try:
-                    fr.goto_rosreestr_page(page, timeout=30000)
+                    if assisted:
+                        fr.goto_rosreestr_page(page, timeout=30000)
+                    else:
+                        fr.prepare_for_next_object(page, on_log=on_log, timeout_ms=25000)
                     fr._interruptible_wait(page, 800, should_cancel, should_skip)
                 except Exception:
                     pass
@@ -293,7 +335,10 @@ def run_collection(
                 on_log("  форма не распознана — пропуск (см. сообщение выше)")
                 res.failed += 1
                 try:
-                    fr.goto_rosreestr_page(page, timeout=30000)
+                    if assisted:
+                        fr.goto_rosreestr_page(page, timeout=30000)
+                    else:
+                        fr.prepare_for_next_object(page, on_log=on_log, timeout_ms=25000)
                     fr._interruptible_wait(page, 800, should_cancel, should_skip)
                 except fr.CollectionAborted:
                     res.cancelled = True
@@ -312,13 +357,15 @@ def run_collection(
 
             rp.save_ownership_cache(rr_cache, kn, form,
                                     "rosreestr-assist" if assisted else "rosreestr-auto",
-                                    encumbrances=encs)
+                                    encumbrances=encs, previous_numbers=prev_nums)
             try:
                 fr.append_to_forms_csv(forms_csv, kn, form)
             except Exception:  # noqa: BLE001
                 pass
             res.saved += 1
             note = f"; обременений: {len(encs)}" if encs else ""
+            if prev_nums:
+                note += f"; ранее присвоенные: {len(prev_nums)}"
             on_log(f"  сохранено: «{form}»{note}")
             if apply_after_each:
                 try:
@@ -337,14 +384,17 @@ def run_collection(
                     pass
                 continue
             try:
-                fr.goto_rosreestr_page(page, timeout=30000)
+                fr.prepare_for_next_object(page, on_log=on_log, timeout_ms=30000)
                 fr._interruptible_wait(page, 800, should_cancel, should_skip)
             except fr.CollectionAborted:
                 if should_cancel():
                     res.cancelled = True
                     break
             except Exception:
-                pass
+                try:
+                    fr.goto_rosreestr_page(page, timeout=30000)
+                except Exception:
+                    pass
             try:
                 fr._interruptible_wait(
                     page, int(fr.PAUSE_BETWEEN_OBJECTS_SEC * 1000),
@@ -355,5 +405,7 @@ def run_collection(
                     break
 
         ctx.close()
+        fr._ACTIVE_RECORDER = None
+        fr._ACTIVE_RECORDER_LOG = None
 
     return res

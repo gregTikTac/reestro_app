@@ -72,7 +72,7 @@ def engine():
 
 def check_balance(cfg: dict, timeout: int = 30) -> dict:
     """
-    Запрос баланса. Возвращает {ok, status, units, message, raw}.
+    Запрос баланса. Возвращает {ok, status, units, balances, message, raw}.
     Не бросает исключений — любые ошибки упаковываются в результат.
     """
     eng = engine()
@@ -80,46 +80,71 @@ def check_balance(cfg: dict, timeout: int = 30) -> dict:
     try:
         client = eng.ReestroClient(cfg, pause=0, timeout=timeout, retries=1)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "status": None, "units": None,
+        return {"ok": False, "status": None, "units": None, "balances": {},
                 "message": f"Ошибка инициализации клиента: {exc}", "raw": ""}
 
     url = f"{base}/realty/billing/v1/balance"
     try:
         r = client.session.get(url, timeout=timeout)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "status": None, "units": None,
+        return {"ok": False, "status": None, "units": None, "balances": {},
                 "message": f"Нет связи с сервером: {exc.__class__.__name__} ({exc})",
                 "raw": ""}
 
     text = r.text or ""
     if r.status_code == 401:
-        return {"ok": False, "status": 401, "units": None,
+        return {"ok": False, "status": 401, "units": None, "balances": {},
                 "message": "401 — неверный apiKey или orgId.", "raw": text[:500]}
     if r.status_code == 402:
-        return {"ok": False, "status": 402, "units": None,
+        return {"ok": False, "status": 402, "units": None, "balances": {},
                 "message": "402 — недостаточно средств на балансе.", "raw": text[:500]}
     if r.status_code != 200:
-        return {"ok": False, "status": r.status_code, "units": None,
+        return {"ok": False, "status": r.status_code, "units": None, "balances": {},
                 "message": f"HTTP {r.status_code}", "raw": text[:500]}
 
     units = None
+    balances: dict[str, str] = {}
+    lines: list[str] = []
+
+    def _s(v) -> str:
+        return "" if v is None else str(v).strip()
+
     try:
         data = r.json()
         items = data.get("items") if isinstance(data, dict) else None
         if isinstance(items, list):
             for it in items:
-                code = (it.get("type") or {}).get("code", "")
-                if code == "address_api_open_data":
-                    units = (it.get("balance") or {}).get("value")
-                    break
+                if not isinstance(it, dict):
+                    continue
+                code = _s((it.get("type") or {}).get("code"))
+                name = _s((it.get("type") or {}).get("description")) or code or _s(it.get("id"))
+                bal = it.get("balance") or {}
+                val = bal.get("value")
+                unit = _s(bal.get("unit") or bal.get("unitClass"))
+                if val is None:
+                    continue
+                if unit == "Kopek":
+                    amount = f"{float(val) / 100:.2f} руб."
+                else:
+                    amount = f"{int(val)} шт."
+                tariff = _s(it.get("tariffType"))
+                suffix = f" [{tariff}]" if tariff else ""
+                line = f"{name}: {amount}{suffix}"
+                if code:
+                    balances[code] = amount
+                    if code == "address_api_open_data":
+                        units = int(val)
+                lines.append(line)
     except Exception:  # noqa: BLE001
         pass
 
     msg = "Подключение успешно."
-    if units is not None:
+    if lines:
+        msg += "\n" + "\n".join(lines)
+    elif units is not None:
         msg += f" Доступно единиц (address_api_open_data): {units}."
-    return {"ok": True, "status": 200, "units": units, "message": msg,
-            "raw": text[:500]}
+    return {"ok": True, "status": 200, "units": units, "balances": balances,
+            "message": msg, "raw": text[:500]}
 
 
 # --------------------------------------------------------------------------- #
@@ -358,7 +383,8 @@ class BatchRunner:
                     try:
                         eng.generate_pdf(info, rights, row, pdf_path,
                                          ownership_form=own,
-                                         encumbrances_override=encs)
+                                         encumbrances_override=encs,
+                                         rr_cache_dir=rr_cache_dir)
                     except Exception as exc:  # noqa: BLE001
                         failed += 1
                         self._ev("object", index=n, total=total, kn=kn_norm,

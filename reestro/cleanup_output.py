@@ -188,6 +188,7 @@ def rebuild_report_from_cache(out_dir: Path, input_paths: list[Path],
     cache_dir = out_dir / "cache" / "json"
     rr_cache_dir = out_dir / "cache" / "rosreestr"
     pdf_dir = out_dir / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
     rr_cache_dir.mkdir(parents=True, exist_ok=True)
 
     overrides = load_ownership_overrides(
@@ -232,7 +233,8 @@ def rebuild_report_from_cache(out_dir: Path, input_paths: list[Path],
 
         if regen_pdf or not (pdf_dir / pdf_name).exists():
             generate_pdf(info, rights, row, pdf_dir / pdf_name,
-                         ownership_form=own_form, encumbrances_override=encs)
+                         ownership_form=own_form, encumbrances_override=encs,
+                         rr_cache_dir=rr_cache_dir)
 
         rows.extend(build_xlsx_rows(
             row, info, rights, pdf_name, extract_id, extract_date,

@@ -85,6 +85,12 @@ class _CollectWorker(QThread):
         while not self._assist_event.is_set():
             if self._cancel:
                 return False
+            try:
+                from ..rosreestr_collector import _import_engine_modules
+                _, fr = _import_engine_modules()
+                fr._poll_assist_events(kn)
+            except Exception:
+                pass
             self._assist_event.wait(timeout=0.35)
         return not self._cancel
 
@@ -411,7 +417,7 @@ class OwnersTab(QWidget):
 
     def _on_form_ready(self):
         self.continue_btn.setEnabled(True)
-        self._log("→ Справочная информация online готова. "
+        self._log("→ Форма ЛK готова (есть «Вид объекта»). "
                   "Нажмите «Вход выполнен — продолжить».")
 
     def on_continue(self):
@@ -486,6 +492,18 @@ class OwnersTab(QWidget):
         self._log(
             f"Готово. Сохранено: {res.saved} из {res.total}. "
             f"Пропущено (уже было): {res.skipped_existing}. Ошибок: {res.failed}.")
+        if res.total and res.saved == 0 and not getattr(res, "cancelled", False):
+            self._log(
+                "→ Ни один объект не сохранён. Смотрите строки «не удалось выбрать» "
+                "или «форма не распознана» выше. Убедитесь, что открыта вкладка "
+                "«Справочная информация online» после входа в ЛК.")
+            QMessageBox.warning(
+                self, "Собственники",
+                "Сбор завершён, но данные не сохранены.\n\n"
+                "Частая причина — не выбран «Вид объекта» в форме ЛК.\n"
+                "Проверьте журнал на вкладке и повторите сбор.\n"
+                "Если браузер на другой странице — откройте «Справочную "
+                "информацию online» и нажмите «Вход выполнен — продолжить».")
         self._refresh_info()
         out = self._out_root()
         if out:

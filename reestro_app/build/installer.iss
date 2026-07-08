@@ -8,7 +8,7 @@
 ; Если dist пустой — установщик соберётся битым!
 
 #define AppName "ЕГРН-Парсер"
-#define AppVersion "0.1.0"
+#define AppVersion "0.1.3"
 #define AppExe "ЕГРН-Парсер.exe"
 
 [Setup]

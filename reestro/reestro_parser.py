@@ -441,6 +441,49 @@ def _dn(value) -> str:
     return s if s else "данные отсутствуют"
 
 
+def format_previous_state_numbers(info: dict, rr_cache_dir: Path | None = None,
+                                  kn: str = "") -> str:
+    """
+    Текст для поля «Ранее присвоенный государственный учетный номер».
+
+    Приоритет: строки из кэша Росreestr (блок «Ранее присвоенные номера»),
+    затем поля API (inventoryNumber, previousCadastralNumbers).
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def add(line: str) -> None:
+        line = _str(line)
+        if not line or line in seen:
+            return
+        seen.add(line)
+        lines.append(line)
+
+    if rr_cache_dir and kn:
+        for item in load_previous_numbers(rr_cache_dir, kn):
+            add(item)
+
+    prev_cad = info.get("previousCadastralNumbers")
+    if isinstance(prev_cad, list):
+        for v in prev_cad:
+            v = _str(v)
+            if v:
+                add(f"Кадастровый номер {v}")
+    elif prev_cad:
+        add(f"Кадастровый номер {_str(prev_cad)}")
+
+    inv = info.get("inventoryNumbers") or info.get("inventoryNumber")
+    if isinstance(inv, list):
+        for v in inv:
+            v = _str(v)
+            if v:
+                add(f"Инвентарный номер {v}")
+    elif inv:
+        add(f"Инвентарный номер {_str(inv)}")
+
+    return "\n".join(lines)
+
+
 def _format_floor(info: dict) -> str:
     """Форматирует этаж как в образце: «Этаж №03»."""
     floor = _str(info.get("floor") or "")
@@ -469,7 +512,8 @@ class EgrnPdf(FPDF):
     def __init__(self, obj_type: str, cadastral: str, report_date: str,
                  info: dict, rights: list[dict], input_row: "InputRow",
                  totals: tuple | None = None, ownership_form: str = "",
-                 encumbrances_override: list[str] | None = None):
+                 encumbrances_override: list[str] | None = None,
+                 rr_cache_dir: Path | None = None):
         super().__init__(orientation="L", unit="mm", format="letter")
         self.set_margins(9, 20, 9)              # боковые ~26 pt; верх 20 мм
         self.b_margin = 30                        # низ ~86 pt как в образце
@@ -483,6 +527,7 @@ class EgrnPdf(FPDF):
         self._info     = info
         self._rights   = rights
         self._row      = input_row
+        self._rr_cache_dir = rr_cache_dir
         self._owner_form = _str(ownership_form)
         self._enc_override = [_str(e) for e in (encumbrances_override or []) if _str(e)]
 
@@ -744,7 +789,7 @@ class EgrnPdf(FPDF):
             ("Номер кадастрового квартала", kvartal),
             ("Дата присвоения кадастрового номера", info.get("createDate")),
             ("Ранее присвоенный государственный учетный номер",
-             info.get("previousCadastralNumbers")),
+             format_previous_state_numbers(info, self._rr_cache_dir, self.cadastral)),
             ("Адрес", info.get("address") or self._row.full_address),
             ("Площадь", area_v),
             ("Назначение", info.get("constructionType")),
@@ -941,7 +986,8 @@ class EgrnPdf(FPDF):
 def generate_pdf(info: dict, rights: list[dict],
                  input_row: InputRow, out_path: Path,
                  ownership_form: str = "",
-                 encumbrances_override: list[str] | None = None):
+                 encumbrances_override: list[str] | None = None,
+                 rr_cache_dir: Path | None = None):
     """Генерирует PDF-отчёт в формате образца (альбомный, Times New Roman)."""
     obj_type  = info.get("realEstateGroup") or "Объект недвижимости"
     cadastral = info.get("cadastralNumber") or input_row.cadastral or ""
@@ -950,7 +996,8 @@ def generate_pdf(info: dict, rights: list[dict],
     # 1-й проход — узнаём число листов в каждом разделе
     probe = EgrnPdf(obj_type, cadastral, rep_date, info, rights, input_row,
                     ownership_form=ownership_form,
-                    encumbrances_override=encumbrances_override)
+                    encumbrances_override=encumbrances_override,
+                    rr_cache_dir=rr_cache_dir)
     probe.build()
     s1_pages  = probe._s2_first - 1
     total_all = probe.page_no()
@@ -960,8 +1007,10 @@ def generate_pdf(info: dict, rights: list[dict],
     doc = EgrnPdf(obj_type, cadastral, rep_date, info, rights, input_row,
                   totals=(s1_pages, s2_pages, total_all),
                   ownership_form=ownership_form,
-                  encumbrances_override=encumbrances_override)
+                  encumbrances_override=encumbrances_override,
+                  rr_cache_dir=rr_cache_dir)
     doc.build()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.output(str(out_path))
 
 
@@ -1291,13 +1340,15 @@ def load_ownership_cache(cache_dir: Path, kn: str) -> str | None:
 
 
 def save_ownership_cache(cache_dir: Path, kn: str, form: str, source: str,
-                         encumbrances: list[str] | None = None) -> Path:
+                         encumbrances: list[str] | None = None,
+                         previous_numbers: list[str] | None = None) -> Path:
     """
     Сохраняет данные о собственности с lk.rosreestr.ru в кэш.
 
     Формат (обратно совместим — старые файлы содержат только ownership_form):
       ownership_form — форма собственности («Частная собственность» и т.п.);
-      encumbrances   — список обременений объекта (необязательно).
+      encumbrances   — список обременений объекта (необязательно);
+      previous_numbers — строки блока «Ранее присвоенные номера» (необязательно).
     При повторном сохранении непустые прежние значения не затираются пустыми.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1315,6 +1366,9 @@ def save_ownership_cache(cache_dir: Path, kn: str, form: str, source: str,
     if encumbrances is None:
         encumbrances = prev.get("encumbrances") or []
     encumbrances = [_str(e) for e in encumbrances if _str(e)]
+    if previous_numbers is None:
+        previous_numbers = prev.get("previous_numbers") or []
+    previous_numbers = [_str(e) for e in previous_numbers if _str(e)]
 
     payload = {
         "cadastralNumber": normalize_kn(kn),
@@ -1322,10 +1376,25 @@ def save_ownership_cache(cache_dir: Path, kn: str, form: str, source: str,
         "source": source,
         "ownership_form": form,
         "encumbrances": encumbrances,
+        "previous_numbers": previous_numbers,
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return path
+
+
+def load_previous_numbers(cache_dir: Path, kn: str) -> list[str]:
+    """Строки «Ранее присвоенные номера» из кэша Росreestr."""
+    path = ownership_cache_path(cache_dir, kn)
+    if not path.exists():
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    nums = data.get("previous_numbers") or []
+    return [_str(e) for e in nums if _str(e)]
 
 
 def load_object_encumbrances(cache_dir: Path, kn: str) -> list[str]:
@@ -1669,7 +1738,8 @@ def process(args):
             save_api_cache(cache_dir, kn_norm, info, None, input_row=row)
             rights = extract_rights(info)
             own_form = ownership_for(kn_norm)
-            generate_pdf(info, rights, row, pdf_path, ownership_form=own_form)
+            generate_pdf(info, rights, row, pdf_path, ownership_form=own_form,
+                         rr_cache_dir=rr_cache_dir)
             ok += 1
             xlsx_rows = build_xlsx_rows(
                 row, info, rights, pdf_name, extract_id, extract_date,
@@ -1704,7 +1774,8 @@ def process(args):
                     print(f"[cache: {path.name}] ", end="")
                 rights = extract_rights(info)
                 own_form = ownership_for(kn_norm)
-                generate_pdf(info, rights, row, pdf_path, ownership_form=own_form)
+                generate_pdf(info, rights, row, pdf_path, ownership_form=own_form,
+                         rr_cache_dir=rr_cache_dir)
                 ok += 1
                 xlsx_rows  = build_xlsx_rows(
                     row, info, rights, pdf_name, extract_id, extract_date,

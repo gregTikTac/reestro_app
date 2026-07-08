@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIST = ROOT / "dist" / "ЕГРН-Парсер"
-RELEASE_NAME = "ЕГРН-Парсер_0.1.0"
+RELEASE_NAME = "ЕГРН-Парсер_0.1.3"
 RELEASE_DIR = Path(__file__).resolve().parent / RELEASE_NAME
 ZIP_PATH = Path(__file__).resolve().parent / f"{RELEASE_NAME}.zip"
 
@@ -26,7 +26,7 @@ ENGINE_CFG = """{
 }
 """
 
-PROCHITI = """ЕГРН-Парсер 0.1.0 — комплект для заказчика
+PROCHITI = """ЕГРН-Парсер 0.1.3 — комплект для заказчика
 ============================================
 
 БЫСТРЫЙ СТАРТ (включил и работай)
@@ -68,7 +68,7 @@ PROCHITI = """ЕГРН-Парсер 0.1.0 — комплект для заказ
      «Данные готовы — записать и далее»)
   3) Открыть report.xlsx и pdf\\ в папке output
 
-  Браузер: Edge или Chrome (системный). Python не нужен.
+  Браузер: Microsoft Edge (системный). Python не нужен.
 
 ВАЖНО
 -----
@@ -121,13 +121,7 @@ def main():
             "  .\\venv\\Scripts\\python.exe -m PyInstaller build\\egrn.spec --noconfirm --clean"
         )
 
-    # Chromium в дистрибутиве
-    msp = SRC_DIST / "_internal" / "ms-playwright"
-    if not msp.is_dir() or not any(msp.glob("chromium-*")):
-        print("ВНИМАНИЕ: в dist нет вшитого Chromium — заказчику понадобится интернет "
-              "для авто-скачивания браузера при первом сборе.")
-
-    print("Конвертация инструкций в Word…")
+    # Chromium в дистрибутиве не используется — браузер Microsoft Edge (системный).
     _convert_docx()
 
     if RELEASE_DIR.exists():
